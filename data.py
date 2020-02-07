@@ -6,7 +6,7 @@ from pyspark.sql.types import *
 from pyspark.ml.feature import *
 from pyspark.ml.clustering import *
 from pyspark.ml.classification import *
-from pyspark.ml import PipelineModel
+from pyspark.ml import PipelineModel, Pipeline
 from pyspark.ml.tuning import ParamGridBuilder, CrossValidator, TrainValidationSplit
 from pyspark.ml.evaluation import ClusteringEvaluator
 
@@ -50,3 +50,31 @@ def generate_seller():
   df = sc.parallelize(rows).toDF(["seller","deposit","discount"])
   df = df.withColumn("discount", when(col("discount")<1.6, lit(0)).otherwise(col("discount")))
   return df
+
+def generate_vector():
+  rows = [
+    ("A", ["A1","A2","A3"]),
+    ("B", ["B1","B2"]),
+    ("C", ["C1","C3"]),
+    ("D", [])
+  ]
+  df = sc.parallelize(rows).toDF(["grade", "sub"])
+  return df
+
+def cv(df):
+  vec = VectorAssembler(inputCols=["price","size","lat","lng"], outputCol="v")
+  kmeans = KMeans(featuresCol="v", predictionCol="pred")
+
+  pipe = Pipeline(stages=[vec, kmeans])
+  ev   = ClusteringEvaluator(predictionCol="pred", featuresCol="v")
+  grid = ParamGridBuilder().addGrid(kmeans.k, [3,4,5]).build()
+  cv   = TrainValidationSplit(estimator=pipe, estimatorParamMaps=grid, evaluator=ev, trainRatio=0.75)
+  model = cv.fit(df)
+
+  return model
+
+
+
+
+
+
