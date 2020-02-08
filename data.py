@@ -8,7 +8,8 @@ from pyspark.ml.clustering import *
 from pyspark.ml.classification import *
 from pyspark.ml import PipelineModel, Pipeline
 from pyspark.ml.tuning import ParamGridBuilder, CrossValidator, TrainValidationSplit
-from pyspark.ml.evaluation import ClusteringEvaluator
+from pyspark.ml.evaluation import *
+from pyspark.ml.feature import ChiSqSelector
 
 """
 To load this file into an environment of choice, do the following
@@ -61,16 +62,42 @@ def generate_vector():
   df = sc.parallelize(rows).toDF(["grade", "sub"])
   return df
 
-def cv(df):
+def generate_1M():
+  affine = udf(lambda x, noise: x*10+(noise*x))
+  d = 1000. # denominator
+  df = sc.parallelize([(0, (i/d).item()) for i in np.arange(1,1e6)]).toDF(["i","x"])
+  df = df.withColumn("noise", generate_random(lit(0.), lit(0.2)))
+  df = df.withColumn("y", affine(col("x"), col("noise")))
+  df = df.withColumn("z", when(abs(col("noise"))>0.2, lit(1)).otherwise(lit(0)))
+  return df.orderBy(rand())
+
+def example_train_cluster(df):
+  # Expected input: inventory
   vec = VectorAssembler(inputCols=["price","size","lat","lng"], outputCol="v")
   kmeans = KMeans(featuresCol="v", predictionCol="pred")
 
   pipe = Pipeline(stages=[vec, kmeans])
-  ev   = ClusteringEvaluator(predictionCol="pred", featuresCol="v")
+  ev   = ClusteringEvaluator(predictionCol="pred", featuresCol="v", distanceMeasure="cosine") # cosine, squaredEuclidean
   grid = ParamGridBuilder().addGrid(kmeans.k, [3,4,5]).build()
   cv   = TrainValidationSplit(estimator=pipe, estimatorParamMaps=grid, evaluator=ev, trainRatio=0.75)
   model = cv.fit(df)
 
+  return model
+
+def example_train_regression(df):
+  # Expected input: 1M
+  
+  #ChiSqSelector(numTopFeatures=3, featuresCol="v",
+  #              outputCol="selectedFeatures", labelCol="z")
+  
+  reg  = LogisticRegression(featuresCol="v", predictionCol="z", maxIter=10, regParam=0.1, elasticNetParam=0.5)
+
+  pipe = Pipeline(stages=[reg])
+  ev   = RegressionEvaluator(metricName="rmse") # rmse, mse, r2, mae
+  grid = ParamGridBuilder().addGrid(reg.regParam, [0.1,0.2,0.3]).build()
+  cv   = CrossValidator(estimator=pipe, estimatorParamMaps=grid, evaluator=ev, numFolds=3)
+  cv.setParallelism(3)
+  model = cv.fit(df)
   return model
 
 
