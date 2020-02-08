@@ -99,10 +99,10 @@ def example_train_regression(df):
   #ChiSqSelector(numTopFeatures=3, featuresCol="v",
   #              outputCol="selectedFeatures", labelCol="z")
   vec  = VectorAssembler(inputCols=["x","c"], outputCol="v")
-  reg  = LinearRegression(featuresCol="v", predictionCol="pred", labelCol="v", maxIter=5, regParam=0.1, elasticNetParam=0.5)
+  reg  = LinearRegression(featuresCol="v", predictionCol="pred", labelCol="y", maxIter=5, regParam=0.1, elasticNetParam=0.5)
 
   pipe = Pipeline(stages=[vec, reg])
-  ev   = RegressionEvaluator(metricName="rmse", predictionCol="pred", labelCol="v") # rmse, mse, r2, mae
+  ev   = RegressionEvaluator(metricName="rmse", predictionCol="pred", labelCol="y") # rmse, mse, r2, mae
   grid = ParamGridBuilder().addGrid(reg.regParam, [0.1, 0.2]).build()
   cv   = CrossValidator(estimator=pipe, estimatorParamMaps=grid, evaluator=ev, numFolds=3)
   cv.setParallelism(3)
