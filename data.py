@@ -4,12 +4,16 @@ from pyspark.ml.linalg import SparseVector, DenseVector
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
 from pyspark.ml.feature import *
-from pyspark.ml.clustering import *
-from pyspark.ml.classification import *
 from pyspark.ml import PipelineModel, Pipeline
 from pyspark.ml.tuning import ParamGridBuilder, CrossValidator, TrainValidationSplit
 from pyspark.ml.evaluation import *
 from pyspark.ml.feature import ChiSqSelector
+from pyspark.storagelevel import StorageLevel # MEMORY_AND_DISK, DISK_ONLY, OFF_HEAP
+
+from pyspark.ml.clustering import *
+from pyspark.ml.classification import *
+from pyspark.ml.regression import LinearRegression
+
 
 """
 To load this file into an environment of choice, do the following
@@ -63,13 +67,18 @@ def generate_vector():
   return df
 
 def generate_1M():
-  affine = udf(lambda x, noise: x*10+(noise*x))
+  affine = udf(lambda x, noise: x*10+(noise*x), FloatType())
   d = 1000. # denominator
-  df = sc.parallelize([(0, (i/d).item()) for i in np.arange(1,1e6)]).toDF(["i","x"])
+  df = sc.parallelize([(0, i.item(), (i/d).item()) for i in np.arange(1,1e6)]).toDF(["a","b","x"])
   df = df.withColumn("noise", generate_random(lit(0.), lit(0.2)))
-  df = df.withColumn("y", affine(col("x"), col("noise")))
-  df = df.withColumn("z", when(abs(col("noise"))>0.2, lit(1)).otherwise(lit(0)))
-  return df.orderBy(rand())
+  df = df.withColumn("c", generate_random(lit(1.), lit(0.33))) # independent column
+  df = df.withColumn("y", affine(col("x"), col("noise"))) # as regression target
+  df = df.withColumn("z", when(abs(col("noise"))>0.2, lit(1)).otherwise(lit(0))) # as class
+  df = df.cache() # .persist(pyspark.StorageLevel.MEMORY_ONLY)
+  return df.drop("noise").orderBy(rand())
+
+def generate_struct():
+  pass
 
 def example_train_cluster(df):
   # Expected input: inventory
@@ -89,16 +98,19 @@ def example_train_regression(df):
   
   #ChiSqSelector(numTopFeatures=3, featuresCol="v",
   #              outputCol="selectedFeatures", labelCol="z")
-  
-  reg  = LogisticRegression(featuresCol="v", predictionCol="z", maxIter=10, regParam=0.1, elasticNetParam=0.5)
+  vec  = VectorAssembler(inputCols=["x","c"], outputCol="v")
+  reg  = LinearRegression(featuresCol="v", predictionCol="pred", labelCol="v", maxIter=5, regParam=0.1, elasticNetParam=0.5)
 
-  pipe = Pipeline(stages=[reg])
-  ev   = RegressionEvaluator(metricName="rmse") # rmse, mse, r2, mae
-  grid = ParamGridBuilder().addGrid(reg.regParam, [0.1,0.2,0.3]).build()
+  pipe = Pipeline(stages=[vec, reg])
+  ev   = RegressionEvaluator(metricName="rmse", predictionCol="pred", labelCol="v") # rmse, mse, r2, mae
+  grid = ParamGridBuilder().addGrid(reg.regParam, [0.1, 0.2]).build()
   cv   = CrossValidator(estimator=pipe, estimatorParamMaps=grid, evaluator=ev, numFolds=3)
   cv.setParallelism(3)
   model = cv.fit(df)
   return model
+
+def example_train_class(df):
+  pass
 
 
 
